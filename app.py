@@ -513,10 +513,13 @@ elif st.session_state.active_section == "Employee Access":
         
         if employee_data:
             # Navigation tabs for employee portal
-            tabs, tab_view = st.tabs(["My Tasks", "Notifications", "Logout"])
+            selected_tab = st.session_state.get("employee_view", "Tasks")
+            st.session_state.employee_view = selected_tab
+
+            tabs = st.tabs(["My Tasks", "Notifications", "Logout"])
             
             with tabs[0]:
-                if st.session_state.employee_view == "Tasks":
+                if st.session_state.get("employee_view", "") == "Tasks":
                     # Get tasks assigned to this employee
                     employee_tasks = data_handler.get_employee_tasks(employee_id)
                     
@@ -541,10 +544,10 @@ elif st.session_state.active_section == "Employee Access":
                     )
             
             with tabs[1]:
-                if st.session_state.employee_view == "Notifications":
+                if st.session_state.get("employee_view", "") == "Notifications":
                     # Filter emails for this employee
                     if 'sent_emails' in st.session_state:
-                        employee_email = employee_data.get('Email')
+                        employee_email = employee_data.get('Email', '')
                         employee_emails = [
                             email for email in st.session_state.sent_emails 
                             if email.get('to') == employee_email
