@@ -24,6 +24,9 @@ if 'selected_employee' not in st.session_state:
     
 if 'task_to_assign' not in st.session_state:
     st.session_state.task_to_assign = None
+    
+if 'employee_data_loaded' not in st.session_state:
+    st.session_state.employee_data_loaded = False
 
 # Initialize app components
 @st.cache_resource
