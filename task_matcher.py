@@ -1,5 +1,7 @@
 import pandas as pd
 from typing import List, Dict, Any, Optional
+import streamlit as st
+from task_prediction_model import TaskAssignmentModel, SkillSimilarityModel
 
 class TaskMatcher:
     """
@@ -7,12 +9,38 @@ class TaskMatcher:
     """
     def __init__(self, employee_df: Optional[pd.DataFrame] = None):
         self.employee_df = employee_df
+        self.ml_model = TaskAssignmentModel()
+        self.similarity_model = SkillSimilarityModel()
+        self.use_ml_model = False
+        self.tasks_df = None
     
     def set_employee_data(self, employee_df: pd.DataFrame) -> None:
         """
         Set or update the employee data
         """
         self.employee_df = employee_df
+        
+        # Fit the similarity model with the updated employee data
+        self.similarity_model.fit(employee_df)
+        
+    def set_tasks_data(self, tasks_df: pd.DataFrame) -> None:
+        """
+        Set task data for model training
+        """
+        self.tasks_df = tasks_df
+        
+    def train_prediction_model(self) -> bool:
+        """
+        Train the ML prediction model with current employee and task data
+        """
+        if self.employee_df is None or self.tasks_df is None:
+            return False
+            
+        success = self.ml_model.train_model(self.employee_df, self.tasks_df)
+        if success:
+            self.use_ml_model = True
+            st.success("AI task assignment model trained successfully!")
+        return success
     
     def find_matching_employees(self, required_skills: List[str], experience_level: Optional[str] = None) -> pd.DataFrame:
         """
@@ -86,7 +114,65 @@ class TaskMatcher:
     def recommend_best_match(self, required_skills: List[str], experience_preference: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Recommend the best employee match for a task based on skills, experience, and current workload
+        Uses AI models when available
         """
+        # Create a mock task for prediction
+        task = {
+            'Required_Skills': required_skills,
+            'Priority': 'Medium',  # Default priority if not specified
+            'Status': 'Not Started'
+        }
+        
+        # Try to use AI models if available
+        employees_with_scores = None
+        
+        # First try the ML model if it's trained
+        if self.use_ml_model and self.ml_model.trained:
+            # Use the machine learning model for prediction
+            employees_with_scores = self.ml_model.predict(task, self.employee_df)
+            
+            if employees_with_scores is not None and len(employees_with_scores) > 0:
+                # Apply experience filter if specified
+                if experience_preference and experience_preference != "Any":
+                    employees_with_scores = employees_with_scores[
+                        employees_with_scores['Experience'] == experience_preference
+                    ]
+                
+                if len(employees_with_scores) > 0:
+                    # Get the best match
+                    best_match = employees_with_scores.iloc[0].to_dict()
+                    best_match['MatchPercentage'] = float(best_match.get('PredictionScore', 0) * 100)
+                    best_match['AI_Powered'] = True
+                    return best_match
+        
+        # If ML model fails or not enough data, try the similarity model
+        employees_with_scores = self.similarity_model.predict(task, self.employee_df)
+        if employees_with_scores is not None and len(employees_with_scores) > 0:
+            # Apply experience filter if specified
+            if experience_preference and experience_preference != "Any":
+                employees_with_scores = employees_with_scores[
+                    employees_with_scores['Experience'] == experience_preference
+                ]
+            
+            if len(employees_with_scores) > 0:
+                # Get the best match considering similarity and workload
+                employees_with_scores['WorkloadFactor'] = 1.0
+                for idx, emp in employees_with_scores.iterrows():
+                    if emp['Status'] == 'Partially Assigned':
+                        employees_with_scores.at[idx, 'WorkloadFactor'] = 0.8
+                    elif emp['Status'] == 'Fully Assigned':
+                        employees_with_scores.at[idx, 'WorkloadFactor'] = 0.5
+                
+                # Adjust score by workload factor
+                employees_with_scores['FinalScore'] = employees_with_scores['SimilarityScore'] * employees_with_scores['WorkloadFactor']
+                
+                # Get best match
+                best_match = employees_with_scores.sort_values(by='FinalScore', ascending=False).iloc[0].to_dict()
+                best_match['MatchPercentage'] = float(best_match.get('SimilarityScore', 0) * 100)
+                best_match['AI_Powered'] = True
+                return best_match
+        
+        # Fall back to the original algorithm if AI methods fail
         matching_employees = self.find_matching_employees(required_skills, experience_preference)
         
         if len(matching_employees) == 0:
@@ -105,5 +191,33 @@ class TaskMatcher:
         
         # Get best match
         best_match = matching_employees.sort_values(by='FinalScore', ascending=False).iloc[0].to_dict()
+        best_match['AI_Powered'] = False
         
         return best_match
+        
+    def find_ai_matches(self, task: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Use AI models to find the best matches for a task
+        """
+        # Try the ML model first if trained
+        if self.use_ml_model and self.ml_model.trained:
+            matches = self.ml_model.predict(task, self.employee_df)
+            if matches is not None and len(matches) > 0:
+                # Add AI flag
+                matches['AI_Method'] = 'Machine Learning'
+                matches['MatchPercentage'] = matches['PredictionScore'] * 100
+                return matches
+        
+        # Fall back to similarity model
+        matches = self.similarity_model.predict(task, self.employee_df)
+        if matches is not None and len(matches) > 0:
+            # Add AI flag
+            matches['AI_Method'] = 'Skill Similarity'
+            matches['MatchPercentage'] = matches['SimilarityScore'] * 100
+            return matches
+            
+        # If all else fails, use the basic matching algorithm
+        if 'Required_Skills' in task:
+            return self.find_matching_employees(task['Required_Skills'])
+            
+        return pd.DataFrame()

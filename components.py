@@ -113,6 +113,10 @@ def task_card(task: Dict[str, Any], employees_df: Optional[pd.DataFrame] = None,
                     employee = employees_df[employees_df['ID'] == task['Assigned_To']]
                     if len(employee) > 0:
                         st.caption(f"{employee.iloc[0]['Name']} ({employee.iloc[0]['Role']})")
+                        
+                        # Display AI assignment indicator if applicable
+                        if 'AI_Assigned' in task and task['AI_Assigned']:
+                            st.caption("🤖 AI-recommended assignment", help="This task was assigned based on AI recommendation")
                 else:
                     st.caption("Not assigned")
         
@@ -213,3 +217,89 @@ def display_leaderboard(leaderboard_data: pd.DataFrame) -> None:
                 st.write(f"**{int(row['CompletedTasks'])}**")
             
             st.divider()
+
+def display_ai_performance_metrics(prediction_data: List[Dict[str, Any]], completed_tasks: List[Dict[str, Any]]) -> None:
+    """
+    Display AI performance metrics and visualizations
+    """
+    if not prediction_data or not completed_tasks:
+        st.info("AI performance metrics will be available once more tasks are completed.")
+        return
+    
+    st.subheader("AI Model Performance")
+    
+    # Calculate success rate
+    successful_predictions = sum(1 for pred in prediction_data if pred.get('success', False))
+    success_rate = (successful_predictions / len(prediction_data)) * 100 if prediction_data else 0
+    
+    # Display metrics
+    cols = st.columns(3)
+    with cols[0]:
+        st.metric("Success Rate", f"{success_rate:.1f}%")
+    with cols[1]:
+        st.metric("Predictions Made", len(prediction_data))
+    with cols[2]:
+        st.metric("Model Confidence", f"{sum(pred.get('confidence', 0) for pred in prediction_data) / len(prediction_data):.1f}%" if prediction_data else "N/A")
+    
+    # Create and display a chart showing improvement over time
+    if len(prediction_data) >= 5:  # Only show chart with sufficient data
+        st.subheader("Model Improvement Over Time")
+        
+        # Create data for chart
+        df_improvement = pd.DataFrame(prediction_data)
+        
+        # Ensure datetime conversion
+        if 'timestamp' in df_improvement.columns:
+            df_improvement['timestamp'] = pd.to_datetime(df_improvement['timestamp'])
+            df_improvement = df_improvement.sort_values('timestamp')
+            
+            # Calculate rolling success rate
+            df_improvement['rolling_success'] = df_improvement['success'].rolling(window=5, min_periods=1).mean() * 100
+            
+            # Plot the rolling success rate
+            st.line_chart(df_improvement.set_index('timestamp')['rolling_success'])
+            st.caption("Rolling average of prediction success rate (5-prediction window)")
+        
+    # Display completion time comparison
+    st.subheader("Task Completion Efficiency")
+    st.write("Comparing completion times for AI-assigned vs. manually assigned tasks:")
+    
+    # Extract AI-assigned and manually assigned tasks
+    ai_assigned = [task for task in completed_tasks if task.get('AI_Assigned', False)]
+    manually_assigned = [task for task in completed_tasks if not task.get('AI_Assigned', False)]
+    
+    # Calculate average completion time
+    def calculate_avg_completion_time(tasks):
+        if not tasks:
+            return 0
+        total_days = 0
+        count = 0
+        
+        for task in tasks:
+            assigned_date = task.get('Assigned_Date')
+            completion_date = task.get('Completion_Date')
+            
+            if assigned_date and completion_date:
+                try:
+                    assigned = pd.to_datetime(assigned_date)
+                    completed = pd.to_datetime(completion_date)
+                    days = (completed - assigned).days
+                    total_days += days
+                    count += 1
+                except:
+                    pass
+        
+        return total_days / count if count > 0 else 0
+    
+    ai_avg_time = calculate_avg_completion_time(ai_assigned)
+    manual_avg_time = calculate_avg_completion_time(manually_assigned)
+    
+    comparison_data = pd.DataFrame({
+        'Assignment Method': ['AI Assigned', 'Manually Assigned'],
+        'Average Days to Complete': [ai_avg_time, manual_avg_time]
+    })
+    
+    if ai_avg_time > 0 and manual_avg_time > 0:
+        st.bar_chart(comparison_data.set_index('Assignment Method'))
+    else:
+        st.info("Completion time comparison will be available once there are both AI-assigned and manually assigned completed tasks.")

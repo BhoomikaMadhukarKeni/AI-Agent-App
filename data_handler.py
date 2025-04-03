@@ -15,7 +15,8 @@ class DataHandler:
         # Initialized data containers
         self.employee_df = None
         self.tasks_df = pd.DataFrame(columns=["TaskID", "Description", "Required_Skills", 
-                                             "Assigned_To", "Status", "Due_Date", "Priority"])
+                                             "Assigned_To", "Status", "Due_Date", "Priority",
+                                             "AI_Assigned", "AI_Recommendation_Score"])
         
         # Define status options
         self.task_status_options = ["Not Started", "In Progress", "Completed", "Blocked"]
@@ -27,6 +28,10 @@ class DataHandler:
         
         if 'task_counter' not in st.session_state:
             st.session_state.task_counter = 1
+            
+        # Initialize AI prediction tracking
+        if 'ai_predictions' not in st.session_state:
+            st.session_state.ai_predictions = []
         
         if 'employee_data_loaded' not in st.session_state:
             st.session_state.employee_data_loaded = False
@@ -151,9 +156,15 @@ class DataHandler:
             st.error(f"Error sending email: {e}")
             return False
     
-    def assign_task(self, task_id: int, employee_id: int) -> bool:
+    def assign_task(self, task_id: int, employee_id: int, ai_recommended: bool = False, ai_score: float = 0.0) -> bool:
         """
         Assign a task to an employee
+        
+        Parameters:
+        - task_id: The ID of the task to assign
+        - employee_id: The ID of the employee to assign the task to
+        - ai_recommended: Whether this assignment was recommended by AI
+        - ai_score: The confidence score of the AI recommendation
         """
         # Check if employee exists
         if self.employee_df is None or employee_id not in self.employee_df['ID'].values:
@@ -165,6 +176,8 @@ class DataHandler:
                 task["Assigned_To"] = employee_id
                 task["Status"] = "In Progress"
                 task["Assigned_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                task["AI_Assigned"] = ai_recommended
+                task["AI_Recommendation_Score"] = ai_score
                 
                 # Update employee task count
                 employee_idx = self.employee_df.index[self.employee_df['ID'] == employee_id].tolist()[0]
@@ -338,3 +351,58 @@ class DataHandler:
         leaderboard = leaderboard.sort_values(by='CompletedTasks', ascending=False)
         
         return leaderboard
+        
+    def record_ai_prediction(self, task_id: int, employee_id: int, confidence_score: float) -> None:
+        """
+        Record an AI prediction for later evaluation
+        
+        Parameters:
+        - task_id: The ID of the task being assigned
+        - employee_id: The ID of the employee recommended by AI
+        - confidence_score: The confidence score of the prediction (0-1)
+        """
+        prediction = {
+            "task_id": task_id,
+            "recommended_employee_id": employee_id,
+            "confidence_score": confidence_score,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "success": None  # Will be updated when task is completed
+        }
+        
+        st.session_state.ai_predictions.append(prediction)
+    
+    def update_ai_prediction_success(self, task_id: int, success: bool) -> bool:
+        """
+        Update the success status of an AI prediction after a task is completed
+        
+        Parameters:
+        - task_id: The ID of the completed task
+        - success: Whether the AI prediction was successful (task completed on time, etc.)
+        """
+        for prediction in st.session_state.ai_predictions:
+            if prediction["task_id"] == task_id and prediction["success"] is None:
+                prediction["success"] = success
+                prediction["evaluation_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                return True
+        
+        return False
+    
+    def get_ai_performance_data(self) -> List[Dict[str, Any]]:
+        """
+        Get AI prediction performance data for visualization
+        """
+        return st.session_state.ai_predictions
+        
+    def get_ai_success_rate(self) -> float:
+        """
+        Calculate the success rate of AI predictions
+        """
+        predictions = st.session_state.ai_predictions
+        evaluated_predictions = [p for p in predictions if p["success"] is not None]
+        
+        if not evaluated_predictions:
+            return 0.0
+            
+        successful_predictions = [p for p in evaluated_predictions if p["success"]]
+        
+        return len(successful_predictions) / len(evaluated_predictions)

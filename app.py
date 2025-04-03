@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from data_handler import DataHandler
 from task_matcher import TaskMatcher
 from employee_management import EmployeeManagement
-from components import create_top_navigation, employee_card, task_card, display_leaderboard
+from components import create_top_navigation, employee_card, task_card, display_leaderboard, display_ai_performance_metrics
 from employee_interface import login_screen, employee_task_dashboard, notifications_view
 
 # Setup page config
@@ -34,6 +34,9 @@ if 'tasks' not in st.session_state:
     
 if 'task_counter' not in st.session_state:
     st.session_state.task_counter = 1
+    
+if 'ai_predictions' not in st.session_state:
+    st.session_state.ai_predictions = []
 
 # Initialize app components
 @st.cache_resource
@@ -59,7 +62,8 @@ navigation_sections = [
     "View Assigned Tasks", 
     "Performance Leaderboard", 
     "Employee Preferences",
-    "Employee Access"
+    "Employee Access",
+    "AI Training"
 ]
 
 # Create top navigation
@@ -152,7 +156,32 @@ if st.session_state.active_section == "Assign Task":
             )
             
             if best_match:
-                st.info(f"Best match: {best_match['Name']} - {best_match['Position']} ({best_match['MatchPercentage']:.1f}% skill match)")
+                ai_powered = best_match.get('AI_Powered', False)
+                match_text = f"Best match: {best_match['Name']} - {best_match['Position']} ({best_match['MatchPercentage']:.1f}% skill match)"
+                
+                if ai_powered:
+                    st.info(f"🤖 AI RECOMMENDED: {match_text}")
+                else:
+                    st.info(match_text)
+                    
+                # Option to directly assign to best match
+                col1, col2 = st.columns([3, 1])
+                with col2:
+                    if st.button(f"Assign to {best_match['Name']}", key=f"auto_assign_{task_id}"):
+                        # Get match score for tracking performance
+                        match_score = best_match.get('MatchPercentage', 0) / 100.0
+                        
+                        # Record AI prediction for tracking
+                        if ai_powered:
+                            data_handler.record_ai_prediction(task_id, best_match['ID'], match_score)
+                        
+                        # Assign the task
+                        if data_handler.assign_task(task_id, best_match['ID'], ai_powered, match_score):
+                            st.success(f"Task assigned to {best_match['Name']}")
+                            # Update the employee data in the matcher and manager
+                            task_matcher.set_employee_data(data_handler.employee_df)
+                            employee_manager.set_employee_data(data_handler.employee_df)
+                            st.rerun()
             
             # Display all matches
             for idx, employee in matching_employees.iterrows():
@@ -179,7 +208,9 @@ if st.session_state.active_section == "Assign Task":
                     
                     with cols[3]:
                         if st.button("Assign", key=f"assign_{employee['ID']}_{task_id}"):
-                            if data_handler.assign_task(task_id, employee['ID']):
+                            # Not an AI recommendation, manual assignment
+                            match_score = employee['MatchPercentage'] / 100.0 if 'MatchPercentage' in employee else 0.0
+                            if data_handler.assign_task(task_id, employee['ID'], False, match_score):
                                 st.success(f"Task assigned to {employee['Name']}")
                                 # Update the employee data in the matcher and manager
                                 task_matcher.set_employee_data(data_handler.employee_df)
@@ -289,6 +320,12 @@ elif st.session_state.active_section == "View Assigned Tasks":
             def update_task_status(task_id, new_status, progress=None):
                 if data_handler.update_task_status(task_id, new_status, progress):
                     st.success(f"Task #{task_id} status updated to {new_status}")
+                    
+                    # If task is completed, update AI prediction success
+                    if new_status == "Completed":
+                        # Mark AI prediction as successful
+                        data_handler.update_ai_prediction_success(task_id, True)
+                    
                     task_matcher.set_employee_data(data_handler.employee_df)
                     employee_manager.set_employee_data(data_handler.employee_df)
                     st.rerun()
@@ -455,6 +492,12 @@ elif st.session_state.active_section == "Employee Access":
                     def handle_task_update(task_id, new_status, progress):
                         if data_handler.update_task_status(task_id, new_status, progress):
                             st.success(f"Task #{task_id} status updated to {new_status}")
+                            
+                            # If task is completed, update AI prediction success
+                            if new_status == "Completed":
+                                # Mark AI prediction as successful
+                                data_handler.update_ai_prediction_success(task_id, True)
+                                
                             st.rerun()
                     
                     # Display employee dashboard
@@ -488,3 +531,218 @@ elif st.session_state.active_section == "Employee Access":
             st.session_state.logged_in_employee_id = None
             if st.button("Back to Login"):
                 st.rerun()
+
+elif st.session_state.active_section == "AI Training":
+    st.header("AI Task Assignment Model")
+    
+    st.write("""
+    This page allows you to train and manage the AI task assignment models. 
+    The system uses two types of models:
+    1. **Machine Learning Model**: A Random Forest model that learns from completed tasks
+    2. **Skill Similarity Model**: A simpler model that uses TF-IDF and cosine similarity
+    """)
+    
+    # Check if we have task data for training
+    all_tasks = data_handler.get_all_tasks()
+    completed_tasks = [task for task in all_tasks if task["Status"] == "Completed"]
+    
+    # Update task data in the task matcher
+    task_matcher.set_tasks_data(data_handler.tasks_df)
+    
+    # Training section
+    st.subheader("Model Training")
+    
+    # Display stats
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Employees", len(data_handler.employee_df) if data_handler.employee_df is not None else 0)
+    with col2:
+        st.metric("Total Tasks", len(all_tasks))
+    with col3:
+        st.metric("Completed Tasks", len(completed_tasks))
+    
+    # Training button for ML model
+    st.write("Machine Learning models require sufficient completed task data to be trained effectively.")
+    
+    if len(completed_tasks) >= 5:
+        if st.button("Train AI Assignment Model"):
+            with st.spinner("Training the model with historical task data..."):
+                if task_matcher.train_prediction_model():
+                    st.success("AI model trained successfully!")
+                else:
+                    st.error("Failed to train the model. Not enough data or an error occurred.")
+    else:
+        st.warning(f"Need at least 5 completed tasks to train the ML model. Currently have {len(completed_tasks)}.")
+        st.info("The system will automatically use the Skill Similarity model until enough data is available.")
+    
+    # Model testing section
+    st.subheader("Model Testing")
+    
+    # Create a test task
+    st.write("Create a test task to see AI-recommended employee matches:")
+    
+    # Get all available skills from loaded employee data
+    available_skills = data_handler.get_all_skills()
+    
+    test_skills = st.multiselect("Required Skills", available_skills, key="test_skills")
+    priority = st.selectbox("Priority", ["Low", "Medium", "High"], key="test_priority")
+    
+    if test_skills:
+        # Create a test task
+        test_task = {
+            "Required_Skills": test_skills,
+            "Priority": priority,
+            "Status": "Not Started"
+        }
+        
+        # Get AI matches
+        ai_matches = task_matcher.find_ai_matches(test_task)
+        
+        if ai_matches is not None and len(ai_matches) > 0:
+            st.subheader("AI-Recommended Matches")
+            
+            # Display the AI method used
+            if 'AI_Method' in ai_matches.columns:
+                ai_method = ai_matches.iloc[0]['AI_Method']
+                st.info(f"Matches generated using: {ai_method}")
+            
+            # Display top matches
+            for idx, employee in ai_matches.head(5).iterrows():
+                with st.container():
+                    cols = st.columns([3, 2, 1])
+                    
+                    with cols[0]:
+                        st.write(f"**{employee['Name']}**")
+                        st.caption(f"{employee['Role']} - {employee['Position']}")
+                    
+                    with cols[1]:
+                        match_score = employee.get('PredictionScore', employee.get('SimilarityScore', 0)) * 100
+                        st.write(f"**Match Score: {match_score:.1f}%**")
+                        st.caption(f"Experience: {employee['Experience']}")
+                    
+                    with cols[2]:
+                        status_color = {
+                            "Unassigned": "green",
+                            "Partially Assigned": "orange",
+                            "Fully Assigned": "red"
+                        }.get(employee['Status'], "gray")
+                        
+                        st.markdown(f"<span style='color:{status_color};'>●</span> {employee['Status']}", unsafe_allow_html=True)
+                        st.caption(f"Tasks: {employee['TaskCount']}")
+                    
+                    st.divider()
+        else:
+            st.warning("No matching employees found for the selected skills")
+    
+    # AI Performance Metrics
+    st.subheader("AI Performance Metrics")
+    
+    # Get AI prediction data
+    ai_prediction_data = data_handler.get_ai_performance_data()
+    
+    # Get completed tasks for comparison
+    completed_tasks = [task for task in all_tasks if task.get("Status") == "Completed"]
+    
+    # Display AI metrics and visualizations
+    display_ai_performance_metrics(ai_prediction_data, completed_tasks)
+    
+    # Model explanation
+    with st.expander("How the AI Models Work"):
+        st.write("""
+        ### Machine Learning Model
+        
+        The Machine Learning model uses historical task assignments to learn which employees
+        are the best match for specific tasks. It considers factors such as:
+        
+        - Skill match score between employee and task
+        - Employee experience level
+        - Task priority
+        - Employee's current workload
+        - Employee's completed task count
+        
+        The model uses a Random Forest classifier which is trained on successfully completed tasks.
+        
+        ### Skill Similarity Model
+        
+        For cases where there isn't enough historical data, the system uses a simpler model based on:
+        
+        - TF-IDF vectorization of employee skills
+        - Cosine similarity between task requirements and employee skill sets
+        - Current workload adjustment
+        
+        This model doesn't require training data and can work immediately with the current employee dataset.
+        """)
+    
+    # Performance monitoring
+    st.subheader("Performance Monitoring")
+    
+    st.write("""
+    As more tasks are assigned and completed, the AI will continue to learn and improve.
+    The system automatically adjusts between the ML and similarity models based on available data.
+    """)
+    
+    # Placeholder for future performance metrics visualization
+    if len(completed_tasks) > 0:
+        st.write("Task completion time by employee (days):")
+        
+        # Calculate average completion time per employee
+        completion_data = {}
+        for task in completed_tasks:
+            if 'Assigned_To' in task and task['Assigned_To'] is not None:
+                emp_id = task['Assigned_To']
+                assigned_date = task.get('Assigned_Date')
+                completion_date = task.get('Completion_Date')
+                
+                if assigned_date and completion_date:
+                    assigned_date = datetime.strptime(assigned_date, "%Y-%m-%d")
+                    completion_date = datetime.strptime(completion_date, "%Y-%m-%d")
+                    days_taken = (completion_date - assigned_date).days
+                    
+                    if emp_id not in completion_data:
+                        completion_data[emp_id] = []
+                    
+                    completion_data[emp_id].append(days_taken)
+        
+        if completion_data:
+            # Calculate averages
+            avg_completion = {emp_id: sum(days)/len(days) for emp_id, days in completion_data.items()}
+            
+            # Create chart data
+            chart_data = []
+            for emp_id, avg_days in avg_completion.items():
+                employee = employee_manager.get_employee_by_id(emp_id)
+                if employee:
+                    chart_data.append({
+                        "Employee": employee['Name'],
+                        "Average Days": avg_days
+                    })
+            
+            if chart_data:
+                chart_df = pd.DataFrame(chart_data)
+                st.bar_chart(chart_df.set_index("Employee"))
+    else:
+        st.info("Performance metrics will be available once tasks are completed.")
+        
+    # AI Prediction Metrics
+    st.subheader("AI Recommendation Analysis")
+    
+    # Get AI prediction data
+    prediction_data = data_handler.get_ai_performance_data()
+    
+    if prediction_data:
+        # Calculate overall metrics
+        ai_success_rate = data_handler.get_ai_success_rate() * 100
+        
+        # Display metrics
+        st.write(f"Overall AI recommendation success rate: **{ai_success_rate:.1f}%**")
+        
+        # Show the prediction history
+        st.markdown("### AI Prediction History")
+        
+        # Create a dataframe for visualization
+        evaluated_predictions = [p for p in prediction_data if p["success"] is not None]
+        
+        if not evaluated_predictions:
+            st.info("No AI predictions have been evaluated yet. Once tasks that were assigned by AI are completed, you'll see detailed performance metrics here.")
+    else:
+        st.info("No AI prediction data available yet. Use the AI-recommended assignments to generate performance data.")
