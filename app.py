@@ -18,7 +18,7 @@ st.set_page_config(
 
 # Initialize session state
 if 'active_section' not in st.session_state:
-    st.session_state.active_section = "Assign Task"
+    st.session_state.active_section = "Auto-Assign Task"
 
 if 'selected_employee' not in st.session_state:
     st.session_state.selected_employee = None
@@ -56,7 +56,7 @@ def change_section(section):
 
 # Define navigation sections
 navigation_sections = [
-    "Assign Task", 
+    "Auto-Assign Task", 
     "Search by Skills", 
     "View All Employees", 
     "View Assigned Tasks", 
@@ -99,10 +99,10 @@ if not st.session_state.employee_data_loaded:
                 employee_manager.set_employee_data(data_handler.employee_df)
 
 # Main content based on active section
-if st.session_state.active_section == "Assign Task":
-    st.header("Assign a Task")
+if st.session_state.active_section == "Auto-Assign Task":
+    st.header("Create & Auto-Assign Task")
     
-    st.write("Enter task details to find the best matching employee")
+    st.write("Enter task details to automatically assign it to the best matching employee")
     
     with st.form(key="task_form"):
         task_description = st.text_area("Task Description")
@@ -127,8 +127,11 @@ if st.session_state.active_section == "Assign Task":
                 "Due Date", 
                 datetime.now().date() + timedelta(days=7)
             )
+            
+        auto_assign = st.checkbox("Auto-assign to best matching employee", value=True,
+                                help="When enabled, the task will be automatically assigned to the best available employee")
         
-        submit_task = st.form_submit_button("Find Matching Employees")
+        submit_task = st.form_submit_button("Create Task")
     
     if submit_task and task_description and required_skills:
         # Add the task
@@ -147,41 +150,70 @@ if st.session_state.active_section == "Assign Task":
         
         # Show matching results
         if len(matching_employees) > 0:
-            st.subheader(f"Found {len(matching_employees)} matching employees")
-            
-            # Show best match with highlight
+            # Get the best match using AI recommendation
             best_match = task_matcher.recommend_best_match(
                 required_skills=required_skills,
                 experience_preference=None if experience_preference == "Any" else experience_preference
             )
             
-            if best_match:
+            # Auto-assign if enabled
+            if auto_assign and best_match:
                 ai_powered = best_match.get('AI_Powered', False)
-                match_text = f"Best match: {best_match['Name']} - {best_match['Position']} ({best_match['MatchPercentage']:.1f}% skill match)"
+                match_score = best_match.get('MatchPercentage', 0) / 100.0
                 
+                # Record AI prediction for tracking
                 if ai_powered:
-                    st.info(f"🤖 AI RECOMMENDED: {match_text}")
-                else:
-                    st.info(match_text)
+                    data_handler.record_ai_prediction(task_id, best_match['ID'], match_score)
+                
+                # Assign the task automatically
+                if data_handler.assign_task(task_id, best_match['ID'], ai_powered, match_score):
+                    st.success(f"✅ Task automatically assigned to {best_match['Name']} ({best_match['MatchPercentage']:.1f}% match)")
                     
-                # Option to directly assign to best match
-                col1, col2 = st.columns([3, 1])
-                with col2:
-                    if st.button(f"Assign to {best_match['Name']}", key=f"auto_assign_{task_id}"):
-                        # Get match score for tracking performance
-                        match_score = best_match.get('MatchPercentage', 0) / 100.0
-                        
-                        # Record AI prediction for tracking
-                        if ai_powered:
-                            data_handler.record_ai_prediction(task_id, best_match['ID'], match_score)
-                        
-                        # Assign the task
-                        if data_handler.assign_task(task_id, best_match['ID'], ai_powered, match_score):
-                            st.success(f"Task assigned to {best_match['Name']}")
-                            # Update the employee data in the matcher and manager
-                            task_matcher.set_employee_data(data_handler.employee_df)
-                            employee_manager.set_employee_data(data_handler.employee_df)
-                            st.rerun()
+                    # Update the employee data
+                    task_matcher.set_employee_data(data_handler.employee_df)
+                    employee_manager.set_employee_data(data_handler.employee_df)
+                    
+                    # Show assignment details
+                    st.info(f"🤖 **AI-Powered Assignment**" if ai_powered else "**Best Match Assignment**")
+                    with st.expander("Assignment Details"):
+                        st.write(f"**Employee:** {best_match['Name']} - {best_match['Position']}")
+                        st.write(f"**Match Score:** {best_match['MatchPercentage']:.1f}%")
+                        st.write(f"**Skills:** {', '.join(best_match['Skills'])}")
+                        st.write(f"**Experience:** {best_match['Experience']}")
+                        st.write(f"**Current Workload:** {best_match['TaskCount']} tasks")
+            
+            # If not auto-assigning, show all matching employees
+            elif not auto_assign:
+                st.subheader(f"Found {len(matching_employees)} matching employees")
+                
+                # Show best match with highlight
+                if best_match:
+                    ai_powered = best_match.get('AI_Powered', False)
+                    match_text = f"Best match: {best_match['Name']} - {best_match['Position']} ({best_match['MatchPercentage']:.1f}% skill match)"
+                    
+                    if ai_powered:
+                        st.info(f"🤖 AI RECOMMENDED: {match_text}")
+                    else:
+                        st.info(match_text)
+                    
+                    # Option to directly assign to best match
+                    col1, col2 = st.columns([3, 1])
+                    with col2:
+                        if st.button(f"Assign to {best_match['Name']}", key=f"auto_assign_{task_id}"):
+                            # Get match score for tracking performance
+                            match_score = best_match.get('MatchPercentage', 0) / 100.0
+                            
+                            # Record AI prediction for tracking
+                            if ai_powered:
+                                data_handler.record_ai_prediction(task_id, best_match['ID'], match_score)
+                            
+                            # Assign the task
+                            if data_handler.assign_task(task_id, best_match['ID'], ai_powered, match_score):
+                                st.success(f"Task assigned to {best_match['Name']}")
+                                # Update the employee data in the matcher and manager
+                                task_matcher.set_employee_data(data_handler.employee_df)
+                                employee_manager.set_employee_data(data_handler.employee_df)
+                                st.rerun()
             
             # Display all matches
             for idx, employee in matching_employees.iterrows():
