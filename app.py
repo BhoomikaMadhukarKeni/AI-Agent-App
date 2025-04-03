@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from data_handler import DataHandler
 from task_matcher import TaskMatcher
 from employee_management import EmployeeManagement
-from components import create_sidebar_navigation, employee_card, task_card, display_leaderboard
+from components import create_top_navigation, employee_card, task_card, display_leaderboard
 from employee_interface import login_screen, employee_task_dashboard, notifications_view
 
 # Setup page config
@@ -62,8 +62,8 @@ navigation_sections = [
     "Employee Access"
 ]
 
-# Create sidebar navigation
-create_sidebar_navigation(navigation_sections, st.session_state.active_section, change_section)
+# Create top navigation
+create_top_navigation(navigation_sections, st.session_state.active_section, change_section)
 
 # Main title
 st.title("AI Employee Task Assignment System")

@@ -2,18 +2,26 @@ import streamlit as st
 import pandas as pd
 from typing import List, Dict, Any, Optional, Callable
 
-def create_sidebar_navigation(sections: List[str], active_section: str, on_section_change: Callable[[str], None]) -> None:
+def create_top_navigation(sections: List[str], active_section: str, on_section_change: Callable[[str], None]) -> None:
     """
-    Create a sidebar for navigation
+    Create a horizontal navigation bar at the top
     """
-    with st.sidebar:
-        st.title("Navigation")
-        for section in sections:
+    st.write("## TaskFlowBoard")
+    
+    # Create columns for each navigation item
+    cols = st.columns(len(sections))
+    
+    # Place buttons in each column
+    for i, section in enumerate(sections):
+        with cols[i]:
             if st.button(section, key=f"nav_{section}", 
                         help=f"Navigate to {section}",
                         use_container_width=True,
                         type="primary" if section == active_section else "secondary"):
                 on_section_change(section)
+                
+    # Add a divider after navigation
+    st.divider()
 
 def employee_card(employee: Dict[str, Any], on_select: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
     """
