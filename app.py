@@ -27,6 +27,12 @@ if 'task_to_assign' not in st.session_state:
     
 if 'employee_data_loaded' not in st.session_state:
     st.session_state.employee_data_loaded = False
+    
+if 'tasks' not in st.session_state:
+    st.session_state.tasks = []
+    
+if 'task_counter' not in st.session_state:
+    st.session_state.task_counter = 1
 
 # Initialize app components
 @st.cache_resource
