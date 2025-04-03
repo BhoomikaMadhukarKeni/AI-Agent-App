@@ -1,6 +1,10 @@
 import pandas as pd
 import streamlit as st
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 
 class DataHandler:
@@ -52,6 +56,13 @@ class DataHandler:
                 if 'CompletedTasks' not in self.employee_df.columns:
                     self.employee_df['CompletedTasks'] = 0
                 
+                # Add email column if it doesn't exist
+                if 'Email' not in self.employee_df.columns:
+                    # Generate emails based on name
+                    self.employee_df['Email'] = self.employee_df['Name'].apply(
+                        lambda name: f"{name.lower().replace(' ', '.')}@example.com"
+                    )
+                
                 st.session_state.employee_data_loaded = True
                 return True
             else:
@@ -99,6 +110,47 @@ class DataHandler:
         
         return task_id
     
+    def send_email_notification(self, to_email: str, subject: str, message: str) -> bool:
+        """
+        Send an email notification to the employee
+        """
+        # This is a mock function for demonstration. In production, you would use actual email service.
+        try:
+            # Store email in session state for demo purposes
+            if 'sent_emails' not in st.session_state:
+                st.session_state.sent_emails = []
+            
+            email_data = {
+                "to": to_email,
+                "subject": subject,
+                "message": message,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            st.session_state.sent_emails.append(email_data)
+            
+            # In a real implementation, you would use:
+            # sender_email = "your_email@gmail.com"
+            # sender_password = "your_app_password"
+            # 
+            # msg = MIMEMultipart()
+            # msg['From'] = sender_email
+            # msg['To'] = to_email
+            # msg['Subject'] = subject
+            # 
+            # msg.attach(MIMEText(message, 'html'))
+            # 
+            # server = smtplib.SMTP('smtp.gmail.com', 587)
+            # server.starttls()
+            # server.login(sender_email, sender_password)
+            # server.send_message(msg)
+            # server.quit()
+            
+            return True
+        except Exception as e:
+            st.error(f"Error sending email: {e}")
+            return False
+    
     def assign_task(self, task_id: int, employee_id: int) -> bool:
         """
         Assign a task to an employee
@@ -112,6 +164,7 @@ class DataHandler:
             if task["TaskID"] == task_id:
                 task["Assigned_To"] = employee_id
                 task["Status"] = "In Progress"
+                task["Assigned_Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
                 # Update employee task count
                 employee_idx = self.employee_df.index[self.employee_df['ID'] == employee_id].tolist()[0]
@@ -126,6 +179,33 @@ class DataHandler:
                 else:
                     self.employee_df.at[employee_idx, 'Status'] = 'Fully Assigned'
                 
+                # Send email notification to the employee
+                employee_email = self.employee_df.at[employee_idx, 'Email']
+                employee_name = self.employee_df.at[employee_idx, 'Name']
+                
+                email_subject = f"New Task Assignment: {task['Description'][:30]}..."
+                email_message = f"""
+                <html>
+                <body>
+                    <h2>New Task Assignment</h2>
+                    <p>Hello {employee_name},</p>
+                    <p>You have been assigned a new task:</p>
+                    <div style="background-color:#f0f0f0; padding:15px; border-radius:5px;">
+                        <p><strong>Task ID:</strong> {task_id}</p>
+                        <p><strong>Description:</strong> {task['Description']}</p>
+                        <p><strong>Required Skills:</strong> {', '.join(task['Required_Skills'])}</p>
+                        <p><strong>Priority:</strong> {task['Priority']}</p>
+                        <p><strong>Due Date:</strong> {task['Due_Date']}</p>
+                        <p><strong>Status:</strong> {task['Status']}</p>
+                    </div>
+                    <p>Please log in to the Task Management System to view more details and update your progress.</p>
+                    <p>Thank you,<br>Task Management System</p>
+                </body>
+                </html>
+                """
+                
+                self.send_email_notification(employee_email, email_subject, email_message)
+                
                 # Update tasks DataFrame
                 self.tasks_df = pd.DataFrame(st.session_state.tasks)
                 
@@ -133,14 +213,29 @@ class DataHandler:
         
         return False
     
-    def update_task_status(self, task_id: int, status: str) -> bool:
+    def update_task_status(self, task_id: int, status: str, progress_percentage: int = None) -> bool:
         """
-        Update the status of a task
+        Update the status of a task with optional progress percentage
         """
         for task in st.session_state.tasks:
             if task["TaskID"] == task_id:
                 prev_status = task["Status"]
                 task["Status"] = status
+                task["Last_Updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Update progress percentage if provided
+                if progress_percentage is not None:
+                    task["Progress"] = progress_percentage
+                elif "Progress" not in task:
+                    # Initialize progress based on status
+                    if status == "Not Started":
+                        task["Progress"] = 0
+                    elif status == "In Progress":
+                        task["Progress"] = 25
+                    elif status == "Completed":
+                        task["Progress"] = 100
+                    else:  # Blocked
+                        task["Progress"] = task.get("Progress", 25)  # Keep existing or default to 25%
                 
                 # If task is completed, increment employee's completed task count
                 if status == "Completed" and prev_status != "Completed" and task["Assigned_To"] is not None:
@@ -148,6 +243,67 @@ class DataHandler:
                     employee_idx = self.employee_df.index[self.employee_df['ID'] == employee_id].tolist()[0]
                     self.employee_df.at[employee_idx, 'CompletedTasks'] += 1
                     self.employee_df.at[employee_idx, 'TaskCount'] -= 1
+                    
+                    # Update employee status if needed
+                    new_task_count = self.employee_df.at[employee_idx, 'TaskCount']
+                    if new_task_count == 0:
+                        self.employee_df.at[employee_idx, 'Status'] = 'Unassigned'
+                    elif 1 <= new_task_count <= 3:
+                        self.employee_df.at[employee_idx, 'Status'] = 'Partially Assigned'
+                    
+                    # Send email notification about task completion
+                    employee_email = self.employee_df.at[employee_idx, 'Email']
+                    employee_name = self.employee_df.at[employee_idx, 'Name']
+                    
+                    email_subject = f"Task Completed: {task['Description'][:30]}..."
+                    email_message = f"""
+                    <html>
+                    <body>
+                        <h2>Task Completed</h2>
+                        <p>Hello {employee_name},</p>
+                        <p>You have successfully completed the following task:</p>
+                        <div style="background-color:#f0f0f0; padding:15px; border-radius:5px;">
+                            <p><strong>Task ID:</strong> {task_id}</p>
+                            <p><strong>Description:</strong> {task['Description']}</p>
+                            <p><strong>Completion Date:</strong> {task['Last_Updated']}</p>
+                        </div>
+                        <p>Thank you for your hard work!</p>
+                        <p>Best regards,<br>Task Management System</p>
+                    </body>
+                    </html>
+                    """
+                    
+                    self.send_email_notification(employee_email, email_subject, email_message)
+                
+                # If task status has changed from previous status, send notification
+                elif status != prev_status and task["Assigned_To"] is not None and status != "Completed":
+                    employee_id = task["Assigned_To"]
+                    employee_idx = self.employee_df.index[self.employee_df['ID'] == employee_id].tolist()[0]
+                    employee_email = self.employee_df.at[employee_idx, 'Email']
+                    employee_name = self.employee_df.at[employee_idx, 'Name']
+                    
+                    email_subject = f"Task Status Update: {task['Description'][:30]}..."
+                    email_message = f"""
+                    <html>
+                    <body>
+                        <h2>Task Status Update</h2>
+                        <p>Hello {employee_name},</p>
+                        <p>The status of your task has been updated:</p>
+                        <div style="background-color:#f0f0f0; padding:15px; border-radius:5px;">
+                            <p><strong>Task ID:</strong> {task_id}</p>
+                            <p><strong>Description:</strong> {task['Description']}</p>
+                            <p><strong>Previous Status:</strong> {prev_status}</p>
+                            <p><strong>New Status:</strong> {status}</p>
+                            <p><strong>Progress:</strong> {task['Progress']}%</p>
+                            <p><strong>Last Updated:</strong> {task['Last_Updated']}</p>
+                        </div>
+                        <p>Please log in to the Task Management System to view more details.</p>
+                        <p>Thank you,<br>Task Management System</p>
+                    </body>
+                    </html>
+                    """
+                    
+                    self.send_email_notification(employee_email, email_subject, email_message)
                 
                 # Update tasks DataFrame
                 self.tasks_df = pd.DataFrame(st.session_state.tasks)

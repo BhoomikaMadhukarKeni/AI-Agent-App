@@ -6,6 +6,7 @@ from data_handler import DataHandler
 from task_matcher import TaskMatcher
 from employee_management import EmployeeManagement
 from components import create_sidebar_navigation, employee_card, task_card, display_leaderboard
+from employee_interface import login_screen, employee_task_dashboard, notifications_view
 
 # Setup page config
 st.set_page_config(
@@ -57,7 +58,8 @@ navigation_sections = [
     "View All Employees", 
     "View Assigned Tasks", 
     "Performance Leaderboard", 
-    "Employee Preferences"
+    "Employee Preferences",
+    "Employee Access"
 ]
 
 # Create sidebar navigation
@@ -284,8 +286,8 @@ elif st.session_state.active_section == "View Assigned Tasks":
         
         for task in filtered_tasks:
             # Handler for status change
-            def update_task_status(task_id, new_status):
-                if data_handler.update_task_status(task_id, new_status):
+            def update_task_status(task_id, new_status, progress=None):
+                if data_handler.update_task_status(task_id, new_status, progress):
                     st.success(f"Task #{task_id} status updated to {new_status}")
                     task_matcher.set_employee_data(data_handler.employee_df)
                     employee_manager.set_employee_data(data_handler.employee_df)
@@ -413,3 +415,76 @@ elif st.session_state.active_section == "Employee Preferences":
                 st.error("Employee not found")
     else:
         st.info("No employee data available. Please load employee data first.")
+
+elif st.session_state.active_section == "Employee Access":
+    st.header("Employee Portal")
+    
+    # Initialize employee login session state
+    if 'logged_in_employee_id' not in st.session_state:
+        st.session_state.logged_in_employee_id = None
+    
+    if 'employee_view' not in st.session_state:
+        st.session_state.employee_view = "Tasks"  # Default view
+    
+    # If not logged in, show login screen
+    if st.session_state.logged_in_employee_id is None:
+        employee_id = login_screen()
+        
+        if employee_id:
+            # Verify employee exists
+            if data_handler.employee_df is not None and employee_id in data_handler.employee_df['ID'].values:
+                st.session_state.logged_in_employee_id = employee_id
+                st.rerun()
+            else:
+                st.error("Employee ID not found. Please try again.")
+    else:
+        # Employee is logged in
+        employee_id = st.session_state.logged_in_employee_id
+        employee_data = employee_manager.get_employee_by_id(employee_id)
+        
+        if employee_data:
+            # Navigation tabs for employee portal
+            tabs, tab_view = st.tabs(["My Tasks", "Notifications", "Logout"])
+            
+            with tabs[0]:
+                if st.session_state.employee_view == "Tasks":
+                    # Get tasks assigned to this employee
+                    employee_tasks = data_handler.get_employee_tasks(employee_id)
+                    
+                    # Create handler for task updates
+                    def handle_task_update(task_id, new_status, progress):
+                        if data_handler.update_task_status(task_id, new_status, progress):
+                            st.success(f"Task #{task_id} status updated to {new_status}")
+                            st.rerun()
+                    
+                    # Display employee dashboard
+                    employee_task_dashboard(
+                        employee_id=employee_id,
+                        employee_data=employee_data,
+                        tasks=employee_tasks,
+                        on_task_update=handle_task_update
+                    )
+            
+            with tabs[1]:
+                if st.session_state.employee_view == "Notifications":
+                    # Filter emails for this employee
+                    if 'sent_emails' in st.session_state:
+                        employee_email = employee_data.get('Email')
+                        employee_emails = [
+                            email for email in st.session_state.sent_emails 
+                            if email.get('to') == employee_email
+                        ]
+                        notifications_view(employee_emails)
+                    else:
+                        st.info("No notifications available.")
+            
+            with tabs[2]:
+                if st.button("Logout", key="employee_logout"):
+                    st.session_state.logged_in_employee_id = None
+                    st.session_state.employee_view = "Tasks"
+                    st.rerun()
+        else:
+            st.error("Could not load employee information. Please log in again.")
+            st.session_state.logged_in_employee_id = None
+            if st.button("Back to Login"):
+                st.rerun()
