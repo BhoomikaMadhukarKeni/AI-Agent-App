@@ -8,7 +8,7 @@ from employee_management import EmployeeManagement
 from components import create_top_navigation, employee_card, task_card, display_leaderboard, display_ai_performance_metrics
 from employee_interface import login_screen, employee_task_dashboard, notifications_view
 
-# Setup page config
+# Setup page config 
 st.set_page_config(
     page_title="AI Employee Task Assignment System",
     page_icon="🤖",
